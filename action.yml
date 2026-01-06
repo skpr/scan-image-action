@@ -1,0 +1,65 @@
+name: "Trivy scan image and upload SARIF"
+description: "Pull an image, run Trivy SARIF scan, and upload results to GitHub Code Scanning."
+
+inputs:
+  image-ref:
+    description: "Full image reference, e.g. ghcr.io/org/image:tag"
+    required: true
+  severity:
+    required: false
+    default: "HIGH,CRITICAL"
+  ignore-unfixed:
+    required: false
+    default: "true"
+  vuln-type:
+    required: false
+    default: "os,library"
+  sarif-file:
+    required: false
+    default: "trivy-results.sarif"
+
+runs:
+  using: "composite"
+  steps:
+    - name: 🧮 Compute Code Scanning category
+      id: category
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        IMAGE_REF="${{ inputs.image-ref }}"
+
+        # ghcr.io/skpr/php-fpm:8.3-v2-latest
+        IMAGE_NAME="${IMAGE_REF##*/}"          # php-fpm:8.3-v2-latest
+        IMAGE="${IMAGE_NAME%%:*}"              # php-fpm
+        TAG="${IMAGE_NAME##*:}"                # 8.3-v2-latest
+
+        CATEGORY="trivy-${IMAGE}-${TAG}"
+
+        # GitHub recommends short, stable category values
+        CATEGORY="${CATEGORY//[^a-zA-Z0-9_.-]/-}"
+
+        echo "value=${CATEGORY}" >> "$GITHUB_OUTPUT"
+        echo "Computed category: ${CATEGORY}"
+
+    - name: 📥 Pull image
+      shell: bash
+      run: docker pull "${{ inputs.image-ref }}"
+
+    - name: 🔍 Trivy scan (SARIF)
+      uses: aquasecurity/trivy-action@0.24.0
+      with:
+        image-ref: ${{ inputs.image-ref }}
+        format: sarif
+        output: ${{ inputs.sarif-file }}
+        severity: ${{ inputs.severity }}
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        vuln-type: ${{ inputs.vuln-type }}
+        exit-code: "0"
+
+    - name: ⬆️ Upload Trivy SARIF to Code Scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ${{ steps.category.outputs.value }}
